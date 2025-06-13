@@ -1,7 +1,7 @@
 from flask import Flask, render_template, Response, jsonify, request
 import cv2
 import numpy as np
-import tensorflow as tf
+import tflite_runtime.interpreter as tflite
 import mediapipe as mp
 import threading
 import queue
@@ -19,7 +19,7 @@ pose = mp_pose.Pose(
 )
 
 # Load the TFLite model
-interpreter = tf.lite.Interpreter(model_path='V3/model.tflite')
+interpreter = tflite.Interpreter(model_path='V3/model.tflite')
 interpreter.allocate_tensors()
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
