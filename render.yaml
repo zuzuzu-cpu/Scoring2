@@ -2,10 +2,11 @@ services:
   - type: web
     name: judo-score-app
     env: python
-    runtime: python3.9
-    buildCommand: pip install -r requirements.txt
+    buildCommand: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
     plan: free
     envVars:
       - key: PYTHON_VERSION
-        value: 3.9.18 
+        value: 3.9.0 
