@@ -1,7 +1,7 @@
-from flask import Flask, render_template, Response, jsonify
+from flask import Flask, render_template, Response, jsonify, request
 import cv2
 import numpy as np
-import tensorflow as tf
+import tflite_runtime.interpreter as tflite
 import mediapipe as mp
 import threading
 import queue
@@ -18,8 +18,12 @@ pose = mp_pose.Pose(
     min_tracking_confidence=0.5
 )
 
-# Load the model and classes
-model = tf.keras.models.load_model('model.json', compile=False)
+# Load the TFLite model and classes
+interpreter = tflite.Interpreter(model_path='model.tflite')
+interpreter.allocate_tensors()
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
 with open('classes.json', 'r') as f:
     classes = json.load(f)
 
@@ -27,6 +31,21 @@ with open('classes.json', 'r') as f:
 frame_queue = queue.Queue(maxsize=2)
 prediction_queue = queue.Queue(maxsize=2)
 current_prediction = {"score": "None", "technique": "None"}
+camera_source = 0  # Default to first camera
+camera_thread = None
+camera_active = False
+
+def get_available_cameras():
+    """Get list of available camera sources"""
+    available_cameras = []
+    for i in range(10):  # Check first 10 indices
+        cap = cv2.VideoCapture(i)
+        if cap.isOpened():
+            ret, _ = cap.read()
+            if ret:
+                available_cameras.append(i)
+            cap.release()
+    return available_cameras
 
 def process_frame(frame):
     """Process a single frame and return pose landmarks"""
@@ -46,11 +65,17 @@ def predict_score(landmarks):
     """Predict score based on pose landmarks using the loaded model"""
     if landmarks is not None:
         # Reshape landmarks for model input
-        landmarks = landmarks.reshape(1, -1)
+        landmarks = landmarks.reshape(1, -1).astype(np.float32)
         
-        # Make prediction
-        prediction = model.predict(landmarks, verbose=0)
-        predicted_class = np.argmax(prediction[0])
+        # Set input tensor
+        interpreter.set_tensor(input_details[0]['index'], landmarks)
+        
+        # Run inference
+        interpreter.invoke()
+        
+        # Get output tensor
+        output_data = interpreter.get_tensor(output_details[0]['index'])
+        predicted_class = np.argmax(output_data[0])
         
         # Get the class name from the prediction
         class_name = [k for k, v in classes.items() if v == predicted_class][0]
@@ -63,14 +88,15 @@ def predict_score(landmarks):
 
 def video_processing_thread():
     """Background thread for video processing"""
+    global camera_active
     try:
-        cap = cv2.VideoCapture(0)  # Try to use webcam
+        cap = cv2.VideoCapture(camera_source)
         if not cap.isOpened():
-            # If webcam is not available (like on Render), use a test image
+            # If camera is not available, use a test image
             test_image = np.zeros((480, 640, 3), dtype=np.uint8)
-            cv2.putText(test_image, "No camera available", (50, 240), 
+            cv2.putText(test_image, "Camera not available", (50, 240), 
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-            while True:
+            while camera_active:
                 if not frame_queue.full():
                     frame_queue.put(test_image)
                 if not prediction_queue.full():
@@ -78,7 +104,7 @@ def video_processing_thread():
                 time.sleep(0.1)
             return
 
-        while True:
+        while camera_active:
             ret, frame = cap.read()
             if not ret:
                 break
@@ -98,9 +124,9 @@ def video_processing_thread():
         print(f"Error in video processing thread: {e}")
         # If any error occurs, keep sending a test image
         test_image = np.zeros((480, 640, 3), dtype=np.uint8)
-        cv2.putText(test_image, "Camera Error", (50, 240), 
+        cv2.putText(test_image, f"Camera Error: {str(e)}", (50, 240), 
                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-        while True:
+        while camera_active:
             if not frame_queue.full():
                 frame_queue.put(test_image)
             if not prediction_queue.full():
@@ -119,7 +145,8 @@ def generate_frames():
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    available_cameras = get_available_cameras()
+    return render_template('index.html', cameras=available_cameras)
 
 @app.route('/video_feed')
 def video_feed():
@@ -132,11 +159,38 @@ def get_prediction():
         current_prediction = prediction_queue.get()
     return jsonify(current_prediction)
 
+@app.route('/set_camera', methods=['POST'])
+def set_camera():
+    global camera_source, camera_thread, camera_active
+    
+    # Stop current camera thread if running
+    if camera_active:
+        camera_active = False
+        if camera_thread:
+            camera_thread.join()
+    
+    # Get new camera source from request
+    new_source = request.json.get('camera_source', 0)
+    try:
+        new_source = int(new_source)
+        camera_source = new_source
+        camera_active = True
+        
+        # Start new camera thread
+        camera_thread = threading.Thread(target=video_processing_thread)
+        camera_thread.daemon = True
+        camera_thread.start()
+        
+        return jsonify({"status": "success", "message": f"Camera source set to {new_source}"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
 if __name__ == '__main__':
     # Start video processing thread
-    processing_thread = threading.Thread(target=video_processing_thread)
-    processing_thread.daemon = True
-    processing_thread.start()
+    camera_active = True
+    camera_thread = threading.Thread(target=video_processing_thread)
+    camera_thread.daemon = True
+    camera_thread.start()
     
     # Use PORT env variable for Render
     port = int(os.environ.get('PORT', 5000))
