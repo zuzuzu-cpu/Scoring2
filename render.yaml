@@ -2,11 +2,12 @@ services:
   - type: web
     name: scoring-app
     env: python
-    runtime: python3.9
-    buildCommand: ./build.sh
+    buildCommand: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt
     startCommand: gunicorn app:app
     envVars:
       - key: PYTHON_VERSION
-        value: 3.9.0
+        value: 3.9.18
     healthCheckPath: /
     autoDeploy: true 
