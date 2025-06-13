@@ -19,10 +19,15 @@ pose = mp_pose.Pose(
 )
 
 # Load the TFLite model
-interpreter = tflite.Interpreter(model_path='V3/model.tflite')
-interpreter.allocate_tensors()
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
+MODEL_PATH = os.path.join(os.path.dirname(__file__), 'V3', 'model.tflite')
+try:
+    interpreter = tflite.Interpreter(model_path=MODEL_PATH)
+    interpreter.allocate_tensors()
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+except Exception as e:
+    print(f"Error loading TFLite model: {e}")
+    raise
 
 with open('classes.json', 'r') as f:
     classes = json.load(f)
