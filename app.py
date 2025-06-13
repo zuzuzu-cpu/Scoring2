@@ -18,8 +18,12 @@ pose = mp_pose.Pose(
     min_tracking_confidence=0.5
 )
 
-# Load the model and classes
-model = tf.keras.models.load_model('model.json', compile=False)
+# Load the TFLite model
+interpreter = tf.lite.Interpreter(model_path='V3/model.tflite')
+interpreter.allocate_tensors()
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
 with open('classes.json', 'r') as f:
     classes = json.load(f)
 
@@ -60,16 +64,13 @@ def process_frame(frame):
 def predict_score(landmarks):
     """Predict score based on pose landmarks using the loaded model"""
     if landmarks is not None:
-        # Reshape landmarks for model input
-        landmarks = landmarks.reshape(1, -1)
-        
-        # Make prediction
-        prediction = model.predict(landmarks, verbose=0)
-        predicted_class = np.argmax(prediction[0])
-        
-        # Get the class name from the prediction
+        # Reshape and cast landmarks for model input
+        input_data = np.array(landmarks, dtype=np.float32).reshape(input_details[0]['shape'])
+        interpreter.set_tensor(input_details[0]['index'], input_data)
+        interpreter.invoke()
+        output_data = interpreter.get_tensor(output_details[0]['index'])
+        predicted_class = np.argmax(output_data[0])
         class_name = [k for k, v in classes.items() if v == predicted_class][0]
-        
         return {
             "score": class_name,
             "technique": class_name
